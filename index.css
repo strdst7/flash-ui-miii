@@ -593,16 +593,19 @@ html, body {
     height: 100%;
 }
 
+.artifact-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.artifact-download-button,
 .artifact-close-button {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
     background: transparent;
     border: none;
     color: var(--text-secondary);
     cursor: pointer;
-    padding: 8px;
+    padding: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -610,6 +613,13 @@ html, body {
     transition: all 0.2s ease;
 }
 
+.artifact-download-button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.artifact-download-button:hover,
 .artifact-close-button:hover {
     background: rgba(255,255,255,0.1);
     color: var(--text-primary);

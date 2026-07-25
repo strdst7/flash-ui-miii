@@ -5,7 +5,6 @@
 
 //Vibe coded by ammaar@google.com
 
-import { GoogleGenAI } from '@google/genai';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import JSZip from 'jszip';
@@ -84,19 +83,10 @@ function App() {
   useEffect(() => {
       const fetchDynamicPlaceholders = async () => {
           try {
-              const apiKey = process.env.API_KEY;
-              if (!apiKey) return;
-              const ai = new GoogleGenAI({ apiKey });
-              const response = await ai.models.generateContent({
-                  model: 'gemini-3-flash-preview',
-                  contents: { 
-                      role: 'user', 
-                      parts: [{ 
-                          text: 'Generate 20 creative, short, diverse UI component prompts (e.g. "bioluminescent task list"). Return ONLY a raw JSON array of strings. IP SAFEGUARD: Avoid referencing specific famous artists, movies, or brands.' 
-                      }] 
-                  }
-              });
-              const text = response.text || '[]';
+              const response = await fetch('/api/placeholders');
+              if (!response.ok) return;
+              const data = await response.json();
+              const text = data.text || '[]';
               const jsonMatch = text.match(/\[[\s\S]*\]/);
               if (jsonMatch) {
                   const newPlaceholders = JSON.parse(jsonMatch[0]);
@@ -116,41 +106,6 @@ function App() {
     setInputValue(event.target.value);
   };
 
-  const parseJsonStream = async function* (responseStream: AsyncGenerator<{ text: string }>) {
-      let buffer = '';
-      for await (const chunk of responseStream) {
-          const text = chunk.text;
-          if (typeof text !== 'string') continue;
-          buffer += text;
-          let braceCount = 0;
-          let start = buffer.indexOf('{');
-          while (start !== -1) {
-              braceCount = 0;
-              let end = -1;
-              for (let i = start; i < buffer.length; i++) {
-                  if (buffer[i] === '{') braceCount++;
-                  else if (buffer[i] === '}') braceCount--;
-                  if (braceCount === 0 && i > start) {
-                      end = i;
-                      break;
-                  }
-              }
-              if (end !== -1) {
-                  const jsonString = buffer.substring(start, end + 1);
-                  try {
-                      yield JSON.parse(jsonString);
-                      buffer = buffer.substring(end + 1);
-                      start = buffer.indexOf('{');
-                  } catch (e) {
-                      start = buffer.indexOf('{', start + 1);
-                  }
-              } else {
-                  break; 
-              }
-          }
-      }
-  };
-
   const handleGenerateVariations = useCallback(async () => {
     const currentSession = sessions[currentSessionIndex];
     if (!currentSession || focusedArtifactIndex === null) return;
@@ -161,42 +116,55 @@ function App() {
     setDrawerState({ isOpen: true, mode: 'variations', title: 'Variations', data: currentArtifact.id });
 
     try {
-        const apiKey = process.env.API_KEY;
-        if (!apiKey) throw new Error("API_KEY is not configured.");
-        const ai = new GoogleGenAI({ apiKey });
-
-        const prompt = `
-You are a master UI/UX designer. Generate 3 RADICAL CONCEPTUAL VARIATIONS of: "${currentSession.prompt}".
-
-**STRICT IP SAFEGUARD:**
-No names of artists. 
-Instead, describe the *Physicality* and *Material Logic* of the UI.
-
-**CREATIVE GUIDANCE (Use these as EXAMPLES of how to describe style, but INVENT YOUR OWN):**
-1. Example: "Asymmetrical Primary Grid" (Heavy black strokes, rectilinear structure, flat primary pigments, high-contrast white space).
-2. Example: "Suspended Kinetic Mobile" (Delicate wire-thin connections, floating organic primary shapes, slow-motion balance, white-void background).
-3. Example: "Grainy Risograph Press" (Overprinted translucent inks, dithered grain textures, monochromatic color depth, raw paper substrate).
-4. Example: "Volumetric Spectral Fluid" (Generative morphing gradients, soft-focus diffusion, bioluminescent light sources, spectral chromatic aberration).
-
-**YOUR TASK:**
-For EACH variation:
-- Invent a unique design persona name based on a NEW physical metaphor.
-- Rewrite the prompt to fully adopt that metaphor's visual language.
-- Generate high-fidelity HTML/CSS.
-
-Required JSON Output Format (stream ONE object per line):
-\`{ "name": "Persona Name", "html": "..." }\`
-        `.trim();
-
-        const responseStream = await ai.models.generateContentStream({
-            model: 'gemini-3-flash-preview',
-             contents: [{ parts: [{ text: prompt }], role: 'user' }],
-             config: { temperature: 1.2 }
+        const response = await fetch('/api/variations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: currentSession.prompt })
         });
 
-        for await (const variation of parseJsonStream(responseStream)) {
-            if (variation.name && variation.html) {
-                setComponentVariations(prev => [...prev, variation]);
+        if (!response.ok) throw new Error(`Server returned ${response.status}`);
+        
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("Could not read response stream");
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            
+            // Re-use parseJsonStream logic but for a simple string buffer
+            let braceCount = 0;
+            let start = buffer.indexOf('{');
+            while (start !== -1) {
+                braceCount = 0;
+                let end = -1;
+                for (let i = start; i < buffer.length; i++) {
+                    if (buffer[i] === '{') braceCount++;
+                    else if (buffer[i] === '}') braceCount--;
+                    if (braceCount === 0 && i > start) {
+                        end = i;
+                        break;
+                    }
+                }
+                if (end !== -1) {
+                    const jsonString = buffer.substring(start, end + 1);
+                    try {
+                        const variation = JSON.parse(jsonString);
+                        if (variation.name && variation.html) {
+                            setComponentVariations(prev => [...prev, variation]);
+                        }
+                        buffer = buffer.substring(end + 1);
+                        start = buffer.indexOf('{');
+                    } catch (e) {
+                        start = buffer.indexOf('{', start + 1);
+                    }
+                } else {
+                    break; 
+                }
             }
         }
     } catch (e: any) {
@@ -224,36 +192,29 @@ Required JSON Output Format (stream ONE object per line):
     ));
 
     try {
-        const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-        if (!apiKey) throw new Error("API_KEY is not configured.");
-        const ai = new GoogleGenAI({ apiKey });
-
-        const prompt = `
-You are a master UI/UX designer. Create a HIGH-FIDELITY VARIATION of the following UI artifact.
-
-**CONTEXT:**
-Original Prompt: "${currentSession.prompt}"
-Style Direction: "${currentArtifact.styleName}"
-
-**TASK:**
-Maintain the CORE STRUCTURE and FUNCTIONALITY, but change the STYLISTIC EXECUTION or ADD a new functional nuance. 
-Think about changing the color palette, typography weight, spacing density, or adding a subtle interactive element.
-
-**OUTPUT:**
-Provide ONLY the complete HTML/CSS code. No conversational text. No markdown blocks.
-`.trim();
-
-        const responseStream = await ai.models.generateContentStream({
-            model: 'gemini-3-flash-preview',
-            contents: [
-                { role: 'user', parts: [{ text: `Current Code:\n${currentArtifact.html}\n\n${prompt}` }] }
-            ],
-            config: { temperature: 1.0 }
+        const response = await fetch('/api/variant', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                prompt: currentSession.prompt,
+                currentCode: currentArtifact.html,
+                styleName: currentArtifact.styleName
+            })
         });
 
+        if (!response.ok) throw new Error(`Server returned ${response.status}`);
+        
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("Could not read response stream");
+
+        const decoder = new TextDecoder();
         let fullHtml = '';
-        for await (const chunk of responseStream.stream) {
-            const chunkText = chunk.text();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunkText = decoder.decode(value, { stream: true });
             fullHtml += chunkText;
             
             // Stream the update
@@ -391,40 +352,24 @@ Provide ONLY the complete HTML/CSS code. No conversational text. No markdown blo
     setFocusedArtifactIndex(null); 
 
     try {
-        const apiKey = process.env.API_KEY;
-        if (!apiKey) throw new Error("API_KEY is not configured.");
-        const ai = new GoogleGenAI({ apiKey });
-
-        const stylePrompt = `
-Generate 3 distinct, highly evocative design directions for: "${trimmedInput}".
-
-**STRICT IP SAFEGUARD:**
-Never use artist or brand names. Use physical and material metaphors.
-
-**CREATIVE EXAMPLES (Do not simply copy these, use them as a guide for tone):**
-- Example A: "Asymmetrical Rectilinear Blockwork" (Grid-heavy, primary pigments, thick structural strokes, Bauhaus-functionalism vibe).
-- Example B: "Grainy Risograph Layering" (Tactile paper texture, overprinted translucent inks, dithered gradients).
-- Example C: "Kinetic Wireframe Suspension" (Floating silhouettes, thin balancing lines, organic primary shapes).
-- Example D: "Spectral Prismatic Diffusion" (Glassmorphism, caustic refraction, soft-focus morphing gradients).
-
-**GOAL:**
-Return ONLY a raw JSON array of 3 *NEW*, creative names for these directions (e.g. ["Tactile Risograph Press", "Kinetic Silhouette Balance", "Primary Pigment Gridwork"]).
-        `.trim();
-
-        const styleResponse = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: { role: 'user', parts: [{ text: stylePrompt }] }
+        const styleResponse = await fetch('/api/styles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: trimmedInput })
         });
 
         let generatedStyles: string[] = [];
-        const styleText = styleResponse.text || '[]';
-        const jsonMatch = styleText.match(/\[[\s\S]*\]/);
-        
-        if (jsonMatch) {
-            try {
-                generatedStyles = JSON.parse(jsonMatch[0]);
-            } catch (e) {
-                console.warn("Failed to parse styles, using fallbacks");
+        if (styleResponse.ok) {
+            const data = await styleResponse.json();
+            const styleText = data.text || '[]';
+            const jsonMatch = styleText.match(/\[[\s\S]*\]/);
+            
+            if (jsonMatch) {
+                try {
+                    generatedStyles = JSON.parse(jsonMatch[0]);
+                } catch (e) {
+                    console.warn("Failed to parse styles, using fallbacks");
+                }
             }
         }
 
@@ -449,72 +394,77 @@ Return ONLY a raw JSON array of 3 *NEW*, creative names for these directions (e.
             };
         }));
 
-        const generateArtifact = async (artifact: Artifact, styleInstruction: string) => {
-            try {
-                const prompt = `
-You are Flash UI. Create a stunning, high-fidelity UI component for: "${trimmedInput}".
+    const generateArtifact = async (artifact: Artifact, styleInstruction: string) => {
+        try {
+            const response = await fetch('/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: trimmedInput, styleInstruction })
+            });
 
-**CONCEPTUAL DIRECTION: ${styleInstruction}**
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `Server returned ${response.status}`);
+            }
+            
+            const reader = response.body?.getReader();
+            if (!reader) throw new Error("Could not read response stream");
 
-**VISUAL EXECUTION RULES:**
-1. **Materiality**: Use the specified metaphor to drive every CSS choice. (e.g. if Risograph, use \`feTurbulence\` for grain and \`mix-blend-mode: multiply\` for ink layering).
-2. **Typography**: Use high-quality web fonts. Pair a bold sans-serif with a refined monospace for data.
-3. **Motion**: Include subtle, high-performance CSS/JS animations (hover transitions, entry reveals).
-4. **IP SAFEGUARD**: No artist names or trademarks. 
-5. **Layout**: Be bold with negative space and hierarchy. Avoid generic cards.
+            const decoder = new TextDecoder();
+            let accumulatedHtml = '';
 
-Return ONLY RAW HTML. No markdown fences.
-          `.trim();
-          
-                const responseStream = await ai.models.generateContentStream({
-                    model: 'gemini-3-flash-preview',
-                    contents: [{ parts: [{ text: prompt }], role: "user" }],
-                });
-
-                let accumulatedHtml = '';
-                for await (const chunk of responseStream) {
-                    const text = chunk.text;
-                    if (typeof text === 'string') {
-                        accumulatedHtml += text;
-                        setSessions(prev => prev.map(sess => 
-                            sess.id === sessionId ? {
-                                ...sess,
-                                artifacts: sess.artifacts.map(art => 
-                                    art.id === artifact.id ? { ...art, html: accumulatedHtml } : art
-                                )
-                            } : sess
-                        ));
-                    }
-                }
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
                 
-                let finalHtml = accumulatedHtml.trim();
-                if (finalHtml.startsWith('```html')) finalHtml = finalHtml.substring(7).trimStart();
-                if (finalHtml.startsWith('```')) finalHtml = finalHtml.substring(3).trimStart();
-                if (finalHtml.endsWith('```')) finalHtml = finalHtml.substring(0, finalHtml.length - 3).trimEnd();
+                const chunkText = decoder.decode(value, { stream: true });
+                accumulatedHtml += chunkText;
 
                 setSessions(prev => prev.map(sess => 
                     sess.id === sessionId ? {
                         ...sess,
                         artifacts: sess.artifacts.map(art => 
-                            art.id === artifact.id ? { ...art, html: finalHtml, status: finalHtml ? 'complete' : 'error' } : art
-                        )
-                    } : sess
-                ));
-
-            } catch (e: any) {
-                console.error('Error generating artifact:', e);
-                setSessions(prev => prev.map(sess => 
-                    sess.id === sessionId ? {
-                        ...sess,
-                        artifacts: sess.artifacts.map(art => 
-                            art.id === artifact.id ? { ...art, html: `<div style="color: #ff6b6b; padding: 20px;">Error: ${e.message}</div>`, status: 'error' } : art
+                            art.id === artifact.id ? { ...art, html: accumulatedHtml } : art
                         )
                     } : sess
                 ));
             }
-        };
+            
+            let finalHtml = accumulatedHtml.trim();
+            if (finalHtml.startsWith('```html')) finalHtml = finalHtml.substring(7).trimStart();
+            if (finalHtml.startsWith('```')) finalHtml = finalHtml.substring(3).trimStart();
+            if (finalHtml.endsWith('```')) finalHtml = finalHtml.substring(0, finalHtml.length - 3).trimEnd();
 
-        await Promise.all(placeholderArtifacts.map((art, i) => generateArtifact(art, generatedStyles[i])));
+            setSessions(prev => prev.map(sess => 
+                sess.id === sessionId ? {
+                    ...sess,
+                    artifacts: sess.artifacts.map(art => 
+                        art.id === artifact.id ? { ...art, html: finalHtml, status: finalHtml ? 'complete' : 'error' } : art
+                    )
+                } : sess
+            ));
+
+        } catch (e: any) {
+            console.error('Error generating artifact:', e);
+            setSessions(prev => prev.map(sess => 
+                sess.id === sessionId ? {
+                    ...sess,
+                    artifacts: sess.artifacts.map(art => 
+                        art.id === artifact.id ? { ...art, html: `<div style="color: #ff6b6b; padding: 20px;">Error: ${e.message}</div>`, status: 'error' } : art
+                    )
+                } : sess
+            ));
+        }
+    };
+
+    // To avoid 429 errors from parallel calls, we sequentialize the generation
+    for (let i = 0; i < placeholderArtifacts.length; i++) {
+        await generateArtifact(placeholderArtifacts[i], generatedStyles[i]);
+        // Add a small delay between generations to be safe
+        if (i < placeholderArtifacts.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+    }
 
     } catch (e) {
         console.error("Fatal error in generation process", e);
@@ -589,7 +539,7 @@ Return ONLY RAW HTML. No markdown fences.
         </button>
 
         <div className={`creator-credit ${hasStarted ? 'hide-on-mobile' : ''}`}>
-            created by miii
+            Crafted by Miii
         </div>
 
         <SideDrawer 
@@ -722,6 +672,7 @@ Return ONLY RAW HTML. No markdown fences.
                                             theme={artifactTheme}
                                             onClick={() => setFocusedArtifactIndex(aIndex)}
                                             onClose={() => setFocusedArtifactIndex(null)}
+                                            delay={aIndex * 0.15}
                                         />
                                     );
                                 })}

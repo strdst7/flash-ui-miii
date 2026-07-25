@@ -4,8 +4,9 @@
 */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { motion } from 'motion/react';
 import { Artifact, ViewportSize } from '../types';
-import { XIcon, MonitorIcon, TabletIcon, PhoneIcon } from './Icons';
+import { XIcon, MonitorIcon, TabletIcon, PhoneIcon, DownloadIcon } from './Icons';
 
 interface ArtifactCardProps {
     artifact: Artifact;
@@ -13,6 +14,7 @@ interface ArtifactCardProps {
     onClick: () => void;
     onClose?: () => void;
     theme?: 'light' | 'dark';
+    delay?: number;
 }
 
 const ArtifactCard = React.memo(({ 
@@ -20,11 +22,25 @@ const ArtifactCard = React.memo(({
     isFocused, 
     onClick,
     onClose,
-    theme = 'dark'
+    theme = 'dark',
+    delay = 0
 }: ArtifactCardProps) => {
     const codeRef = useRef<HTMLPreElement>(null);
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const [viewport, setViewport] = useState<ViewportSize>('desktop');
+
+    const handleDownloadCode = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        const blob = new Blob([artifact.html], { type: 'text/typescript-jsx' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `component-${artifact.id}.tsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
 
     // Auto-scroll logic for this specific card
     useEffect(() => {
@@ -58,10 +74,28 @@ const ArtifactCard = React.memo(({
 
     const isBlurring = artifact.status === 'streaming';
 
+    const [hasAnimated, setHasAnimated] = useState(false);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setHasAnimated(true);
+        }, delay * 1000 + 1000);
+        return () => clearTimeout(timer);
+    }, [delay]);
+
+    const shouldAnimate = !hasAnimated && !isFocused;
+
     return (
-        <div 
+        <motion.div 
             className={`artifact-card ${isFocused ? 'focused' : ''} ${isBlurring ? 'generating' : ''}`}
             onClick={onClick}
+            initial={shouldAnimate ? { opacity: 0, y: 40, scale: 0.9 } : false}
+            animate={shouldAnimate ? { opacity: 1, y: 0, scale: 1 } : false}
+            transition={shouldAnimate ? {
+                duration: 0.8,
+                delay: delay,
+                ease: [0.16, 1, 0.3, 1]
+            } : undefined}
         >
             <div className="artifact-header">
                 <div className="artifact-header-left">
@@ -95,6 +129,15 @@ const ArtifactCard = React.memo(({
                 )}
 
                 <div className="artifact-header-right">
+                    <button 
+                        className="artifact-download-button"
+                        onClick={handleDownloadCode}
+                        title="Download Source (.tsx)"
+                        aria-label="Download Source Code"
+                        disabled={isBlurring}
+                    >
+                        <DownloadIcon />
+                    </button>
                     {(isFocused && onClose) && (
                         <button 
                             className="artifact-close-button" 
@@ -125,7 +168,7 @@ const ArtifactCard = React.memo(({
                     className="artifact-iframe"
                 />
             </div>
-        </div>
+        </motion.div>
     );
 });
 

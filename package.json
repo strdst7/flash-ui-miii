@@ -4,20 +4,27 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^0.7.0",
+    "@google/genai": "^2.12.0",
+    "@types/express": "^5.0.6",
     "@types/jszip": "^3.4.1",
+    "esbuild": "^0.28.1",
+    "express": "^5.2.1",
     "jszip": "^3.10.1",
+    "motion": "^12.42.2",
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "tsx": "^4.23.1"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
+    "@types/node": "20.11.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
